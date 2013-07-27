@@ -1,0 +1,9 @@
+The following components are used for the arduino:
+
+1 Arduino Uno
+1 Parallax 2x16 LCD + Speaker system
+1 Parallax PIR
+1 8-toggle switch
+3 leds (green, yellow, red)
+resistors, wires, etc..
+

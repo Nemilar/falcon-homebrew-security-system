@@ -1,0 +1,4 @@
+1 raspi model b
+1 HD webcam (microsoft lifecam)
+
+software is weezy + mjpg-streamer + python and pyserial
