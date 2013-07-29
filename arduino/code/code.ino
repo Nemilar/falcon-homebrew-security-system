@@ -179,7 +179,7 @@ void loop()
          if (rfidInterface.available() > 0)
          {
            rfidByte = rfidInterface.read();
-           if (rfidByte == rfidByte)
+           if (rfidByte == 1)
            {
              for (int i=0;i<4;i++)
              {
@@ -190,8 +190,11 @@ void loop()
            }
            else
            {
-             Serial.println("Data available, but garbage.\n");
-             Serial.println(rfidByte, HEX);
+             if (DEBUG)
+              {    
+                Serial.println("Data available, but garbage.\n");
+                Serial.println(rfidByte, HEX);
+              }
            }
          }
          else
