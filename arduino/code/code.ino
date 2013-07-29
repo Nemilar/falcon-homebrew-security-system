@@ -7,9 +7,9 @@
 // 
 #include <SoftwareSerial.h>
 #include <string.h>
+#include <EEPROM.h>
 
-
-#define DEBUG 0
+#define DEBUG 1
 
 
 // Some basic shortcut-type stuff.
@@ -29,6 +29,7 @@ const int LCD_READY     = 0;
 #define RFID_WRITE         0x02
 #define RFID_RESET         0x06
 const int MAX_RFID_SLEEP = 750; // Time to wait for the RFID to respond (ms)
+const int RFID_LOCATION  = 4;
 
 
 // Pin assignments
@@ -38,7 +39,9 @@ const int tripIndicatorLED = 3;
 const int LCDPin = 7;
 const int RFID_Out = 11;
 //Digital pins - Input pins
-const int SensorTrip = 6; // PIR 
+const int SensorTrip = 6; // PIR reading
+const int SensorPWR = 8; // The PIR is powered from a pin so
+                          // it can be disabled entirely when the system is off.  
 const int s1 = 5; // switch 1 - audible alarm
 const int s2 = 2; // switch 2 - send email
 const int RFID_In = 10;
@@ -63,9 +66,12 @@ byte oldState;
 const int rfidReadInterval = 3000;
 long lastRFIDReadTime;
 int rfidReadActive = 0;
+char passcode[4];
+int challenge = 1; // 0 when the passcode is right; 1 when it is wrong.
 
 SoftwareSerial lcdInterface = SoftwareSerial(255,LCDPin);
 SoftwareSerial rfidInterface = SoftwareSerial(RFID_In, RFID_Out);
+
 
 void setup()
 {
@@ -76,6 +82,8 @@ void setup()
     pinMode(s2, INPUT); // switch toggle 2 - send email 
     pinMode(RFID_In, INPUT);
     
+    pinMode(SensorPWR, OUTPUT);
+    digitalWrite(SensorPWR, HIGH);
     pinMode(RFID_Out, OUTPUT);
     pinMode(LCDPin, OUTPUT); // Set Digitalpin 4 to an output pin
     pinMode(audibleIndicatorLED, OUTPUT); // LED indicating whether the alarm will sound
@@ -90,6 +98,16 @@ void setup()
 
     rfidInterface.begin(9600);
 
+    /* Read the passcode from the EEPROM.  Right now we're just reading a single memory
+    location on the RFID card, so we only read 4 bytes. */
+    for (int r=0;r<4;r++)
+    {
+      passcode[r] = EEPROM.read(r);
+     
+    }
+    Serial.print("RFID Unlock value: ");
+    Serial.println(passcode);
+    
     delay(1000); // Give everything a second.  Literally.
 }
 
@@ -123,7 +141,7 @@ void loop()
         }
   
    // DEBUG
-   // As it turns out, doing this causes garbage to read in on the RFID and
+   // As it turns out, having the backlight on causes garbage to read in on the RFID and
    // break it.  So, simple solution - don't do that.
    if (rfidReadActive == 0)
    {
@@ -152,7 +170,7 @@ void loop()
      
      // We only need to run this if the alarm is active.  the LCDState doubles as
      // a state for the alarm in its entirety.
-     if (LCDState == LCDState)
+     if (LCDState == LCD_ALARM)
      {
        // If we haven't issued a read command yet, issue one.
        if (rfidReadActive == 0)
@@ -166,7 +184,7 @@ void loop()
          rfidInterface.write(RFID_RESET);
          rfidInterface.write("!RW"); 
          rfidInterface.write(byte(RFID_READ));
-         rfidInterface.write(byte(4));
+         rfidInterface.write(byte(RFID_LOCATION));
          rfidReadActive = 1;
          lastRFIDReadTime = millis();
          Serial.println("Issued new RFID request.");
@@ -181,12 +199,26 @@ void loop()
            rfidByte = rfidInterface.read();
            if (rfidByte == 1)
            {
+             challenge=0;
              for (int i=0;i<4;i++)
              {
-               Serial.print("Good data!\n");
+               Serial.print("-Valid data\n");
                rfidData[i] = rfidInterface.read();
                Serial.print(rfidData[i], HEX);
+               if (rfidData[i] == passcode[i])
+               {
+                  if (DEBUG)
+                   Serial.print("-Passcode_Match-");
+               }
+               else
+               {
+                 challenge=1;  // Indicates that the password is wrong.
+                 if (DEBUG)
+                   Serial.print("-Passcode_Mismatch-");
+               }
              }
+             if (DEBUG)
+              Serial.print(challenge);
            }
            else
            {
@@ -194,7 +226,7 @@ void loop()
               {    
                 Serial.println("Data available, but garbage.\n");
                 Serial.println(rfidByte, HEX);
-              }
+              }  
            }
          }
          else
@@ -214,7 +246,19 @@ void loop()
        }
      }
 
-     
+     /* If challenge has been set to 0, that means that a valid RFID card has been
+       presented. for simplicity, this check is performed seperately. challenge is set
+       above, when the RFID reading occurs. Turn everything off. */
+       if (challenge == 0 && LCDState == LCD_ALARM)
+       {
+         LCDState = LCD_READY;
+         tripIndicatorLEDBlinkUntil = 0;
+         pinMode(SensorPWR, INPUT)
+         ;
+       }
+         
+       
+       
      
      /* Check if switch 1 is set to ON.  This tells us whether or not we 
      should beep audibly on a SensorTrip.  It's useful to have this, since 
@@ -239,32 +283,36 @@ void loop()
      /*********************************************************************************/
      if (digitalRead(SensorTrip) == HIGH && oldState == LOW)
      {
-      lcdInterface.write(LCD_CLEAR);
-      lcdInterface.write(BACKLIGHT_ON);
-      lcdInterface.write("ALARM TRIPPED!  ");
-      LCDState = LCD_ALARM;
-      
-      if (audibleAlarm == 1)
-      {
-        lcdInterface.write(ALARM_TONE); 
-      }
-      oldState = HIGH;
-      if (digitalRead(s2) == HIGH)
+       if(challenge == 1)  // We only need to alarm the system if it is armed. 
        {
-         // switch two indicates that we need to send an email.
-         // the pi reads this string and sends it.
-         Serial.println("Motion detected!");
-         lcdInterface.write("EMAIL/PHOTO SENT");
+   
+         lcdInterface.write(LCD_CLEAR);
+        lcdInterface.write(BACKLIGHT_ON);
+        lcdInterface.write("ALARM TRIPPED!  ");
+        LCDState = LCD_ALARM;
+        
+        if (audibleAlarm == 1)
+        {
+          lcdInterface.write(ALARM_TONE); 
+        }
+        oldState = HIGH;
+        if (digitalRead(s2) == HIGH)
+         {
+           // switch two indicates that we need to send an email.
+           // the pi reads this string and sends it.
+           Serial.println("Motion detected!");
+           lcdInterface.write("EMAIL/PHOTO SENT");
+         }
+  
+        tripIndicatorLEDBlinkUntil = millis() + blinkDuration;
+        
        }
-
-      tripIndicatorLEDBlinkUntil = millis() + blinkDuration;
-      
      }
-     
      else if (digitalRead(SensorTrip) == HIGH && oldState == HIGH)
      {
        oldState = HIGH;
-       tripIndicatorLEDBlinkUntil = millis() + blinkDuration;
+       if (challenge == 1)
+         tripIndicatorLEDBlinkUntil = millis() + blinkDuration;
      }
      else if (digitalRead(SensorTrip) == LOW && oldState == LOW)
      {
