@@ -1,5 +1,15 @@
+// Author: Jonathan DePrizio
+// jondeprizio@gmail.com
+// github.com/nemilar
+//
+// July, 2013
+//
+// 
 #include <SoftwareSerial.h>
 #include <string.h>
+
+
+#define DEBUG 0
 
 
 // Some basic shortcut-type stuff.
@@ -43,14 +53,19 @@ const int tripIndicatorLEDBlinkInterval = 100; // blinking interval; ms
 // Working variables.
 int tripLIndicatorLEDState = 0;
 int LCDState = LCD_READY;
-
+byte rfidByte;
+byte rfidData[4];
 long  lastBlink;
 long tripIndicatorLEDBlinkUntil = 0; 
 int audibleAlarm = 0;
 char* message;
 byte oldState;
+const int rfidReadInterval = 3000;
+long lastRFIDReadTime;
+int rfidReadActive = 0;
 
 SoftwareSerial lcdInterface = SoftwareSerial(255,LCDPin);
+SoftwareSerial rfidInterface = SoftwareSerial(RFID_In, RFID_Out);
 
 void setup()
 {
@@ -70,11 +85,12 @@ void setup()
     
     
     lcdInterface.begin(9600);
-    lcdInterface.write(213);  // set tone to 1/2 note (1sec)
-    //lcdInterface.write(219); // set to MAXIMUM ANNOYANCE!!
-    lcdInterface.write(12); // clear
-    lcdInterface.write(BACKLIGHT_ON); //backlight on
-    delay(5); // required, for some reason...
+    lcdInterface.write(LCD_CLEAR);
+    lcdInterface.write(BACKLIGHT_ON);
+
+    rfidInterface.begin(9600);
+
+    delay(1000); // Give everything a second.  Literally.
 }
 
 void loop()
@@ -94,16 +110,25 @@ void loop()
            if (digitalRead(tripIndicatorLED) == LOW)
            {
              digitalWrite(tripIndicatorLED, HIGH);
-             Serial.write("Turn indicator to high\n");
+             if (DEBUG)
+               Serial.write("Turn indicator to high\n");
            }
            else
            {
             digitalWrite(tripIndicatorLED, LOW);
-            Serial.write("Turn indicator to low\n");
+            if (DEBUG)
+              Serial.write("Turn indicator to low\n");
            } 
            lastBlink = millis();
         }
-        lcdInterface.write(BACKLIGHT_ON);
+  
+   // DEBUG
+   // As it turns out, doing this causes garbage to read in on the RFID and
+   // break it.  So, simple solution - don't do that.
+   if (rfidReadActive == 0)
+   {
+      lcdInterface.write(BACKLIGHT_ON);
+   }
       }
       else
       {
@@ -119,6 +144,75 @@ void loop()
         }
       }
       
+      
+     /* If we're in an alarm state, check the RFID for a valid security card.
+     This tells us to disarm the system.  Right now, the notification to the Pi
+     occurs regardless (assuming switch 2 is on) of whether you identify yourself.
+     */
+     
+     // We only need to run this if the alarm is active.  the LCDState doubles as
+     // a state for the alarm in its entirety.
+     if (LCDState == LCDState)
+     {
+       // If we haven't issued a read command yet, issue one.
+       if (rfidReadActive == 0)
+       {
+          // After some trouble, I finally think I've figured out that you cannot have
+          // both the RFID and the LCD display backlight running at the same time,  If you do, then you will get
+          // garbage over the RFID. 
+        // So turn the backlight off, for now.
+        lcdInterface.write(BACKLIGHT_OFF);
+          
+         rfidInterface.write(RFID_RESET);
+         rfidInterface.write("!RW"); 
+         rfidInterface.write(byte(RFID_READ));
+         rfidInterface.write(byte(4));
+         rfidReadActive = 1;
+         lastRFIDReadTime = millis();
+         Serial.println("Issued new RFID request.");
+         
+       }
+       else
+       {
+         // There is an outstanding read to the RFID.
+         // Is anything available yet?
+         if (rfidInterface.available() > 0)
+         {
+           rfidByte = rfidInterface.read();
+           if (rfidByte == rfidByte)
+           {
+             for (int i=0;i<4;i++)
+             {
+               Serial.print("Good data!\n");
+               rfidData[i] = rfidInterface.read();
+               Serial.print(rfidData[i], HEX);
+             }
+           }
+           else
+           {
+             Serial.println("Data available, but garbage.\n");
+             Serial.println(rfidByte, HEX);
+           }
+         }
+         else
+         {
+           // the RFID still isn't sending any data.  If we've waited long
+           // enough, invalidate the current read attempt so we try
+           // again on the next loop.
+           if ((lastRFIDReadTime + rfidReadInterval) < millis())
+           {
+             rfidInterface.write(RFID_RESET);
+             rfidInterface.flush();
+             Serial.println("Invalidate previous RFID request.");
+             rfidReadActive = 0;
+             
+           }
+         }
+       }
+     }
+
+     
+     
      /* Check if switch 1 is set to ON.  This tells us whether or not we 
      should beep audibly on a SensorTrip.  It's useful to have this, since 
      when you're building and debugging the system, you'll be tripping the 
