@@ -49,7 +49,7 @@ const int RFID_In = 10;
 
 // Other stuff - User defined
 const int blinkDuration =                 1000;// how long to blink after detection of motion; ms
-const int tripIndicatorLEDBlinkInterval = 100; // blinking interval; ms
+const int tripIndicatorLEDBlinkInterval =100; // blinking interval; ms
                                                // Note that this controls the # of blinks
 
 
@@ -58,13 +58,13 @@ int tripLIndicatorLEDState = 0;
 int LCDState = LCD_READY;
 byte rfidByte;
 byte rfidData[4];
-long  lastBlink;
-long tripIndicatorLEDBlinkUntil = 0; 
+unsigned long  lastBlink;
+unsigned long tripIndicatorLEDBlinkUntil = 0; 
 int audibleAlarm = 0;
 char* message;
 byte oldState;
 const int rfidReadInterval = 3000;
-long lastRFIDReadTime;
+unsigned long lastRFIDReadTime;
 int rfidReadActive = 0;
 char passcode[4];
 int challenge = 1; // 0 when the passcode is right; 1 when it is wrong.
