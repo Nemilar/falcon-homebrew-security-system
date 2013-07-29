@@ -29,49 +29,73 @@ const int LCD_READY     = 0;
 #define RFID_WRITE         0x02
 #define RFID_RESET         0x06
 const int MAX_RFID_SLEEP = 750; // Time to wait for the RFID to respond (ms)
-const int RFID_LOCATION  = 4;
+const int RFID_LOCATION  = 4; // Location on RFID card to read.  For now, only reads 1 location (4 bytes).
 
 
 // Pin assignments
 // Digital pins - Output pins
 const int audibleIndicatorLED = 4; 
-const int tripIndicatorLED = 3;
-const int LCDPin = 7;
-const int RFID_Out = 11;
+const int tripIndicatorLED    = 3;
+const int LCDPin              = 7;  // Parallax 2x16+speaker LCD display #27977-RT
+const int RFID_Out            = 11; // Parallax RFID reader, #28443-RT
+const int rangefinder         = 12; // Is both output and input, Parallax #28015-RT
 //Digital pins - Input pins
-const int SensorTrip = 6; // PIR reading
-const int SensorPWR = 8; // The PIR is powered from a pin so
-                          // it can be disabled entirely when the system is off.  
-const int s1 = 5; // switch 1 - audible alarm
-const int s2 = 2; // switch 2 - send email
-const int RFID_In = 10;
+const int SensorTrip          = 6; // Parallax PIR sensor, #555-28027-RT
+const int SensorPWR           = 8; /* The PIR is powered from a pin so it can be disabled entirely when the system is off.  
+                                      This prevents the red LED in the PIR from glowing. */
+const int s1                  = 5; // switch 1 - audible alarm
+const int s2                  = 2; // switch 2 - send email
+const int RFID_In             = 10; 
+
 
 
 // Other stuff - User defined
-const int blinkDuration =                 1000;// how long to blink after detection of motion; ms
-const int tripIndicatorLEDBlinkInterval =100; // blinking interval; ms
-                                               // Note that this controls the # of blinks
+const int blinkDuration                  = 1000;// how long to blink after detection of motion; ms
+const int tripIndicatorLEDBlinkInterval  = 100; // blinking interval; ms
+                                                // Note that this controls the # of blinks
 
 
 // Working variables.
-int tripLIndicatorLEDState = 0;
-int LCDState = LCD_READY;
-byte rfidByte;
-byte rfidData[4];
-unsigned long  lastBlink;
-unsigned long tripIndicatorLEDBlinkUntil = 0; 
-int audibleAlarm = 0;
-char* message;
-byte oldState;
-const int rfidReadInterval = 3000;
-unsigned long lastRFIDReadTime;
-int rfidReadActive = 0;
-char passcode[4];
-int challenge = 1; // 0 when the passcode is right; 1 when it is wrong.
+int LCDState                             = LCD_READY; // Can be LCD_READY an LCD_ALARM.  
+byte rfidByte;                           // simple byte to store some RFID data.
+byte rfidData[4];                        // Passcode fro mthe RFID.  See passcode[4] and challenge.
+unsigned long lastBlink;                // last time the LED blinked.
+unsigned long tripIndicatorLEDBlinkUntil = 0; // how far in the future we'll blink until.
+int audibleAlarm                         = 0; // whether or not to sound the BEEP.  Annoying. Set by s1.
+byte oldState;                           // last recorded state of the PIR sensor.
+const int rfidReadInterval               = 3000;
+unsigned long lastRFIDReadTime;          // The last time an RFID read was issued
+int rfidReadActive                       = 0;
+char passcode[4];                        // Actual read from the EEPROM
+int challenge                            = 1; // 0 when the passcode is right; 1 when it is wrong.
 
-SoftwareSerial lcdInterface = SoftwareSerial(255,LCDPin);
-SoftwareSerial rfidInterface = SoftwareSerial(RFID_In, RFID_Out);
+SoftwareSerial lcdInterface = SoftwareSerial(255,LCDPin); // Parallax 2x16+speaker LCD display #27977-RT
+SoftwareSerial rfidInterface = SoftwareSerial(RFID_In, RFID_Out); // Parallax RFID reader #28443-RT
 
+void backlightOn()
+{
+      lcdInterface.write(BACKLIGHT_ON);
+}
+void backlightOff()
+{
+      lcdInterface.write(BACKLIGHT_OFF);
+}
+
+// Simple function that queries a rangefinder for the current range.
+
+int getRangeFromFinder(int rangeFinderPin)
+{
+         if (DEBUG)
+          Serial.println("Chirp\n");
+         pinMode(rangeFinderPin, OUTPUT);
+         digitalWrite(rangeFinderPin, LOW);
+         delayMicroseconds(2);
+         digitalWrite(rangeFinderPin, HIGH);
+         delayMicroseconds(5);
+         digitalWrite(rangeFinderPin, LOW);
+         pinMode(rangeFinderPin, INPUT);
+         return pulseIn(rangeFinderPin, HIGH)/74/2;
+}
 
 void setup()
 {
@@ -85,17 +109,17 @@ void setup()
     pinMode(SensorPWR, OUTPUT);
     digitalWrite(SensorPWR, HIGH);
     pinMode(RFID_Out, OUTPUT);
-    pinMode(LCDPin, OUTPUT); // Set Digitalpin 4 to an output pin
-    pinMode(audibleIndicatorLED, OUTPUT); // LED indicating whether the alarm will sound
-    pinMode(tripIndicatorLED, OUTPUT); // Indicates a trip of the sensor
+    pinMode(LCDPin, OUTPUT); 
+    pinMode(audibleIndicatorLED, OUTPUT); 
+    pinMode(tripIndicatorLED, OUTPUT); 
     
     digitalWrite(LCDPin, HIGH); // Turn on the LCD to start
     
     
     lcdInterface.begin(9600);
     lcdInterface.write(LCD_CLEAR);
-    lcdInterface.write(BACKLIGHT_ON);
-
+    backlightOn();
+    
     rfidInterface.begin(9600);
 
     /* Read the passcode from the EEPROM.  Right now we're just reading a single memory
@@ -107,6 +131,10 @@ void setup()
     }
     Serial.print("RFID Unlock value: ");
     Serial.println(passcode);
+    
+    // The rangefinder is not included here, because it is only
+    // turned on when the system is off, and the system is by default
+    // turned on.
     
     delay(1000); // Give everything a second.  Literally.
 }
@@ -139,14 +167,6 @@ void loop()
            } 
            lastBlink = millis();
         }
-  
-   // DEBUG
-   // As it turns out, having the backlight on causes garbage to read in on the RFID and
-   // break it.  So, simple solution - don't do that.
-   if (rfidReadActive == 0)
-   {
-      lcdInterface.write(BACKLIGHT_ON);
-   }
       }
       else
       {
@@ -155,7 +175,7 @@ void loop()
         clear it.  Otherwise, ignore. */
         if (LCDState == LCD_ALARM)
         {
-          lcdInterface.write(BACKLIGHT_OFF);
+          backlightOff();
           lcdInterface.write(LCD_CLEAR);
           lcdInterface.write("Alarm system    activated.");
           LCDState = LCD_READY;
@@ -178,8 +198,8 @@ void loop()
           // After some trouble, I finally think I've figured out that you cannot have
           // both the RFID and the LCD display backlight running at the same time,  If you do, then you will get
           // garbage over the RFID. 
-        // So turn the backlight off, for now.
-        lcdInterface.write(BACKLIGHT_OFF);
+          // NOTE - actually, this seems not to be true.  I don't know why it use to be the case.          
+          
           
          rfidInterface.write(RFID_RESET);
          rfidInterface.write("!RW"); 
@@ -249,12 +269,32 @@ void loop()
      /* If challenge has been set to 0, that means that a valid RFID card has been
        presented. for simplicity, this check is performed seperately. challenge is set
        above, when the RFID reading occurs. Turn everything off. */
-       if (challenge == 0 && LCDState == LCD_ALARM)
+       if (challenge == 0)
        {
-         LCDState = LCD_READY;
+         if (LCDState == LCD_ALARM)
+        {  
+          LCDState = LCD_READY;
          tripIndicatorLEDBlinkUntil = 0;
-         pinMode(SensorPWR, INPUT)
-         ;
+         lcdInterface.write(LCD_CLEAR);
+         lcdInterface.write("System          deactivated.");
+         pinMode(SensorPWR, INPUT); // Is there a bette rway to disable a pin?
+        } 
+        
+         /* The system is rearmed by waving your hand in front of the ultrasonic sensor.
+         It detects a variation in motion and arms itself.  I wonder if a fly could set this
+         off ? */
+         
+
+         if (getRangeFromFinder(rangefinder) < 10)
+         {
+           challenge = 1;
+           pinMode(SensorPWR, OUTPUT);
+           digitalWrite(SensorPWR, HIGH);
+           lcdInterface.write(LCD_CLEAR);
+           lcdInterface.write("System armed.");
+         }
+         
+         
        }
          
        
@@ -287,7 +327,7 @@ void loop()
        {
    
          lcdInterface.write(LCD_CLEAR);
-        lcdInterface.write(BACKLIGHT_ON);
+        backlightOn();
         lcdInterface.write("ALARM TRIPPED!  ");
         LCDState = LCD_ALARM;
         
