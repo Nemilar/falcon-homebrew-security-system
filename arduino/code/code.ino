@@ -69,8 +69,8 @@ int rfidReadActive                       = 0;
 char passcode[4];                        // Actual read from the EEPROM
 int challenge                            = 1; // 0 when the passcode is right; 1 when it is wrong.
 
-SoftwareSerial lcdInterface = SoftwareSerial(255,LCDPin); // Parallax 2x16+speaker LCD display #27977-RT
-SoftwareSerial rfidInterface = SoftwareSerial(RFID_In, RFID_Out); // Parallax RFID reader #28443-RT
+SoftwareSerial lcdInterface = SoftwareSerial(255,LCDPin); 
+SoftwareSerial rfidInterface = SoftwareSerial(RFID_In, RFID_Out); 
 
 void backlightOn()
 {
@@ -278,6 +278,8 @@ void loop()
          lcdInterface.write(LCD_CLEAR);
          lcdInterface.write("System          deactivated.");
          pinMode(SensorPWR, INPUT); // Is there a bette rway to disable a pin?
+         delay(1000); // dislike, but simple...
+         backlightOff();
         } 
         
          /* The system is rearmed by waving your hand in front of the ultrasonic sensor.
